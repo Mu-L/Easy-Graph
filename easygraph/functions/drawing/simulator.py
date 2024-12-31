@@ -40,8 +40,6 @@ class Simulator:
             position, velocity, stop = self._step(
                 position, velocity, H, epsilon, damping, dt
             )
-            # np.save("./tmp/position_{}.npy".format(it), position)
-            # np.save("./tmp/velocity_{}.npy".format(it), velocity)
             if stop:
                 break
             damping *= self.damping_factor
@@ -147,7 +145,7 @@ class Simulator:
         f = f.sum(axis=1)  # (n, 2)
         return f
 
-    def _edge_repulsion(self, e_center, H, e2e_dist, k=1.0):
+    def _edge_repulsion(self, e_center, H, e2e_dist, k=1.0, min_dist=1e-6):
         import numpy as np
 
         """
@@ -163,7 +161,7 @@ class Simulator:
         )  # (m, 1, 2) - (1, m, 2) -> (m, m, 2)
         f_dir_len = np.linalg.norm(f_dir, axis=2)  # (m, m)
         f_dir_len[r, c] = np.inf
-        # f_dir = f_dir / f_dir_len[:, :, np.newaxis]  # (m, m, 2)
+        # 使用最小距离阈值
         f_dir = safe_div(f_dir, f_dir_len[:, :, np.newaxis])  # (m, m, 2)
         f = f_scale[:, :, np.newaxis] * f_dir  # (m, m, 2)
         f[r, c] = 0

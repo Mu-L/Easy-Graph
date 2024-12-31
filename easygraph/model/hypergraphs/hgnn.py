@@ -39,6 +39,7 @@ class HGNN(nn.Module):
             ``X`` (``torch.Tensor``): Input vertex feature matrix. Size :math:`(N, C_{in})`.
             ``hg`` (``eg.Hypergraph``): The hypergraph structure that contains :math:`N` vertices.
         """
+
         for layer in self.layers:
             X = layer(X, hg)
         return X
