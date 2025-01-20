@@ -57,24 +57,28 @@ class UniGCNConv(nn.Module):
             hg (``eg.Hypergraph``): The hypergraph structure that contains :math:`|\mathcal{V}|` vertices.
         """
         X = self.theta(X)
-        if self.bn is not None:
-            X = self.bn(X)
         Y = hg.v2e(X, aggr="mean")
-        # ===============================================
         # compute the special degree of hyperedges
         _De = torch.zeros(hg.num_e, device=hg.device)
-        # scatter_reduce() is relay on the torch 1.12.1, which may be updated in the future
-        _De = _De.scatter_reduce(
-            0, index=hg.v2e_dst, src=hg.D_v.clone()._values()[hg.v2e_src], reduce="mean"
-        )
-        _De = _De.pow(-0.5)
+        _Dv = hg.D_v._values()[hg.v2e_src]
+        _De = (
+            _De.scatter_reduce(0, index=hg.v2e_dst, src=_Dv, reduce="mean")
+            / _De.scatter_reduce(
+                0, index=hg.v2e_dst, src=(_Dv != 0).float(), reduce="sum"
+            )
+        ).pow(-0.5)
+
         _De[_De.isinf()] = 1
         Y = _De.view(-1, 1) * Y
         # ===============================================
         X = hg.e2v(Y, aggr="sum")
         X = torch.sparse.mm(hg.D_v_neg_1_2, X)
+
         if not self.is_last:
-            X = self.drop(self.act(X))
+            X = self.act(X)
+            if self.bn is not None:
+                X = self.bn(X)
+            X = self.drop(X)
         return X
 
 
@@ -130,20 +134,26 @@ class UniGATConv(nn.Module):
             hg (``eg.Hypergraph``): The hypergraph structure that contains :math:`|\mathcal{V}|` vertices.
         """
         X = self.theta(X)
-        if self.bn is not None:
-            X = self.bn(X)
         Y = hg.v2e(X, aggr="mean")
         # ===============================================
-        alpha_e = self.atten_e(Y)
-        e_atten_score = alpha_e[hg.e2v_src]
-        e_atten_score = self.atten_dropout(self.atten_act(e_atten_score).squeeze())
+        # alpha_e = self.atten_e(Y)
+        # e_atten_score = alpha_e[hg.e2v_src]
+        # e_atten_score = self.atten_dropout(self.atten_act(e_atten_score).squeeze())
+
+        e_atten_score = self.atten_dropout(
+            self.atten_act(self.atten_e(Y)[hg.e2v_src]).squeeze()
+        )
+
         # ================================================================================
         # We suggest to add a clamp on attention weight to avoid Nan error in training.
-        e_atten_score = torch.clamp(e_atten_score, min=0.001, max=5)
+        e_atten_score.clamp_(min=0.001, max=5)
         # ================================================================================
         X = hg.e2v(Y, aggr="softmax_then_sum", e2v_weight=e_atten_score)
+
         if not self.is_last:
             X = self.act(X)
+            if self.bn is not None:
+                X = self.bn(X)
         return X
 
 
@@ -198,12 +208,13 @@ class UniSAGEConv(nn.Module):
             hg (``eg.Hypergraph``): The hypergraph structure that contains :math:`|\mathcal{V}|` vertices.
         """
         X = self.theta(X)
-        if self.bn is not None:
-            X = self.bn(X)
         Y = hg.v2e(X, aggr="mean")
         X = hg.e2v(Y, aggr="sum") + X
         if not self.is_last:
-            X = self.drop(self.act(X))
+            X = self.act(X)
+            if self.bn is not None:
+                X = self.bn(X)
+            X = self.drop(X)
         return X
 
 
@@ -267,10 +278,11 @@ class UniGINConv(nn.Module):
             hg (``eg.Hypergraph``): The hypergraph structure that contains :math:`|\mathcal{V}|` vertices.
         """
         X = self.theta(X)
-        if self.bn is not None:
-            X = self.bn(X)
         Y = hg.v2e(X, aggr="mean")
         X = (1 + self.eps) * hg.e2v(Y, aggr="sum") + X
         if not self.is_last:
-            X = self.drop(self.act(X))
+            X = self.act(X)
+            if self.bn is not None:
+                X = self.bn(X)
+            X = self.drop(X)
         return X

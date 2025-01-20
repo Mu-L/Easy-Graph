@@ -1,7 +1,5 @@
 """Cora, citeseer, pubmed dataset.
 
-(lingfan): following dataset loading and preprocessing code from tkipf/gcn
-https://github.com/tkipf/gcn/blob/master/gcn/utils.py
 """
 from __future__ import absolute_import
 
@@ -15,16 +13,13 @@ import scipy.sparse as sp
 
 from easygraph.classes.graph import Graph
 
-from .eg_dataset import EasyGraphBuiltinDataset
+from .graph_dataset_base import EasyGraphBuiltinDataset
 from .utils import _get_dgl_url
 from .utils import data_type_dict
 from .utils import deprecate_property
 from .utils import generate_mask_tensor
 from .utils import nonzero_1d
 from .utils import tensor
-
-
-backend = os.environ.get("DGLBACKEND", "pytorch")
 
 
 def _pickle_load(pkl_file):
@@ -35,13 +30,13 @@ def _pickle_load(pkl_file):
 
 
 class CitationGraphDataset(EasyGraphBuiltinDataset):
-    r"""The citation graph dataset, including cora, citeseer and pubmeb.
+    r"""The citation graph dataset, including Cora, CiteSeer and PubMed.
     Nodes mean authors and edges mean citation relationships.
 
     Parameters
     -----------
     name: str
-      name can be 'cora', 'citeseer' or 'pubmed'.
+      name can be 'Cora', 'CiteSeer' or 'PubMed'.
     raw_dir : str
         Raw file directory to download/contains the input data directory.
         Default: ~/.dgl/
@@ -60,7 +55,7 @@ class CitationGraphDataset(EasyGraphBuiltinDataset):
     """
     _urls = {
         "cora_v2": "dataset/cora_v2.zip",
-        "citeseer": "dataset/citeseer.zip",
+        "citeseer": "dataset/citeSeer.zip",
         "pubmed": "dataset/pubmed.zip",
     }
 
@@ -122,7 +117,7 @@ class CitationGraphDataset(EasyGraphBuiltinDataset):
         test_idx_range = np.sort(test_idx_reorder)
 
         if self.name == "citeseer":
-            # Fix citeseer dataset (there are some isolated nodes in the graph)
+            # Fix CiteSeer dataset (there are some isolated nodes in the graph)
             # Find isolated nodes, add them as zero-vecs into the right position
             test_idx_range_full = range(
                 min(test_idx_reorder), max(test_idx_reorder) + 1

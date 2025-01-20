@@ -10,7 +10,6 @@ import easygraph as eg
 import easygraph.convert as convert
 
 from easygraph.utils.exception import EasyGraphError
-from easygraph.utils.exception import EasyGraphException
 from easygraph.utils.sparse import sparse_dropout
 
 
@@ -125,10 +124,6 @@ class Graph:
         return self._node_index
 
     @property
-    def node_index(self):
-        return self._node_index
-
-    @property
     def edges(self):
         """
         Return an edge list
@@ -177,76 +172,10 @@ class Graph:
                         weights.append(1.0)
                         weights.append(1.0)
                     else:
-                        if type(self._adj[u][v][weight]) == float:
-                            weights.append(self._adj[u][v][weight])
-                            weights.append(self._adj[u][v][weight])
-                        else:
-                            raise EasyGraphException("The type of weight must be float")
-        del seen
+                        weights.append(self._adj[u][v][weight])
+                        weights.append(self._adj[v][u][weight])
         self.cache["e_both_side"] = (edges, weights)
         return self.cache["e_both_side"]
-
-    @staticmethod
-    def from_hypergraph_hypergcn(
-        hypergraph,
-        feature,
-        with_mediator=False,
-        remove_selfloop=True,
-    ):
-        r"""Construct a graph from a hypergraph with methods proposed in `HyperGCN: A New Method of Training Graph Convolutional Networks on Hypergraphs <https://arxiv.org/pdf/1809.02589.pdf>`_ paper .
-
-        Args:
-            ``hypergraph`` (``Hypergraph``): The source hypergraph.
-            ``feature`` (``torch.Tensor``): The feature of the vertices.
-            ``with_mediator`` (``str``): Whether to use mediator to transform the hyperedges to edges in the graph. Defaults to ``False``.
-            ``remove_selfloop`` (``bool``): Whether to remove self-loop. Defaults to ``True``.
-            ``device`` (``torch.device``): The device to store the graph. Defaults to ``torch.device("cpu")``.
-        """
-        import torch
-
-        num_v = hypergraph.num_v
-        assert (
-            num_v == feature.shape[0]
-        ), "The number of vertices in hypergraph and feature.shape[0] must be equal!"
-        e_list, new_e_list, new_e_weight = hypergraph.e[0], [], []
-        rv = torch.rand((feature.shape[1], 1), device=feature.device)
-        for e in e_list:
-            num_v_in_e = len(e)
-            assert (
-                num_v_in_e >= 2
-            ), "The number of vertices in an edge must be greater than or equal to 2!"
-            p = torch.mm(feature[e, :], rv).squeeze()
-            v_a_idx, v_b_idx = torch.argmax(p), torch.argmin(p)
-            if not with_mediator:
-                new_e_list.append([e[v_a_idx], e[v_b_idx]])
-                new_e_weight.append(1.0 / num_v_in_e)
-            else:
-                w = 1.0 / (2 * num_v_in_e - 3)
-                for mid_v_idx in range(num_v_in_e):
-                    if mid_v_idx != v_a_idx and mid_v_idx != v_b_idx:
-                        new_e_list.append([e[v_a_idx], e[mid_v_idx]])
-                        new_e_weight.append(w)
-                        new_e_list.append([e[v_b_idx], e[mid_v_idx]])
-                        new_e_weight.append(w)
-        # remove selfloop
-        if remove_selfloop:
-            new_e_list = torch.tensor(new_e_list, dtype=torch.long)
-            new_e_weight = torch.tensor(new_e_weight, dtype=torch.float)
-            e_mask = (new_e_list[:, 0] != new_e_list[:, 1]).bool()
-            new_e_list = new_e_list[e_mask].numpy().tolist()
-            new_e_weight = new_e_weight[e_mask].numpy().tolist()
-
-        _g = Graph()
-        _g.add_nodes(list(range(0, num_v)))
-        for (
-            e,
-            w,
-        ) in zip(new_e_list, new_e_weight):
-            if _g.has_edge(e[0], e[1]):
-                _g.add_edge(e[0], e[1], weight=(w + _g.adj[e[0]][e[1]]["weight"]))
-            else:
-                _g.add_edge(e[0], e[1], weight=w)
-        return _g
 
     @property
     def A(self):
@@ -257,14 +186,20 @@ class Graph:
         if self.cache.get("A", None) is None:
             if len(self.edges) == 0:
                 self.cache["A"] = torch.sparse_coo_tensor(
-                    size=(len(self.nodes), len(self.edges)), device=self.device
+                    size=(len(self.nodes), len(self.nodes)), device=self.device
                 )
             else:
-                e_list, e_weight = self.e_both_side
+                if self.cache.get("e_both_side") is not None:
+                    e_list, e_weight = self.cache["e_both_side"]
+
+                else:
+                    e_list, e_weight = self.e_both_side
+
+                node_size = len(self.nodes)
                 self.cache["A"] = torch.sparse_coo_tensor(
-                    indices=torch.tensor(e_list).t(),
+                    indices=torch.tensor(e_list, dtype=torch.int).t(),
                     values=torch.tensor(e_weight),
-                    size=(len(self.nodes), len(self.nodes)),
+                    size=(node_size, node_size),
                     device=self.device,
                 ).coalesce()
         return self.cache["A"]
@@ -273,72 +208,116 @@ class Graph:
     def D_v_neg_1_2(
         self,
     ):
-        r"""Return the nomalized diagnal matrix of vertex degree :math:`\mathbf{D}_v^{-\frac{1}{2}}` with ``torch.sparse_coo_tensor`` format. Size :math:`(|\mathcal{V}|, |\mathcal{V}|)`.
+        r"""Return the normalized diagonal matrix of vertex degree :math:`\mathbf{D}_v^{-\frac{1}{2}}` with ``torch.sparse_coo_tensor`` format. Size :math:`(|\mathcal{V}|, |\mathcal{V}|)`.
         """
         import torch
 
         if self.cache.get("D_v_neg_1_2") is None:
-            _mat = self.D_v.clone()
-            _val = _mat._values() ** -0.5
+            if self.cache.get("D_v_value") is None:
+                self.cache["D_v_value"] = (
+                    torch.sparse.sum(self.A, dim=1).to_dense().view(-1)
+                )
+                # self.cache["D_v_value"] = torch.tensor(list(self.degree().values())).float()
+
+            _mat = self.cache["D_v_value"]
+            # _mat = _tmp
+            _val = _mat**-0.5
             _val[torch.isinf(_val)] = 0
+            nodes_num = len(self.nodes)
             self.cache["D_v_neg_1_2"] = torch.sparse_coo_tensor(
-                _mat._indices(), _val, _mat.size(), device=self.device
+                torch.arange(0, len(self.nodes)).view(1, -1).repeat(2, 1),
+                _val,
+                torch.Size([nodes_num, nodes_num]),
+                device=self.device,
             ).coalesce()
         return self.cache["D_v_neg_1_2"]
 
     @property
-    def node2index(self):
+    def index2node(self):
         """
         Assign an integer index for each node (start from 0)
         """
-        if self.cache.get("node2index", None) is None:
+        if self.cache.get("index2node", None) is None:
+            index2node_dict = {}
+            index = 0
+            # for index in range(0, len(self.nodes)):
+
+            for index, n in enumerate(self.nodes):
+                index2node_dict[index] = n
+                # index += 1
+            self.cache["index2node"] = index2node_dict
+        return self.cache["index2node"]
+
+    @property
+    def node_index(self):
+        """
+        Assign an integer index for each node (start from 0)
+        """
+        if self.cache.get("node_index", None) is None:
             node2index_dict = {}
             index = 0
             for n in self.nodes:
                 node2index_dict[n] = index
                 index += 1
-            self.cache["node2index"] = node2index_dict
-        return self.cache["node2index"]
+            self.cache["node_index"] = node2index_dict
+        return self.cache["node_index"]
 
     @property
     def e(self) -> Tuple[List[List[int]], List[float]]:
         r"""Return the edge list, weight list and property list in the graph."""
 
         if self.cache.get("e", None) is None:
-            node2index = self.node2index
+            node_index = self.node_index
             e_list = [
-                (node2index[src_idx], node2index[dst_idx])
+                (node_index[src_idx], node_index[dst_idx])
                 for src_idx, dst_idx, d in self.edges
             ]
             w_list = []
-            property_list = []
+            e_property_list = []
+            v_property_list = []
+
+            node_size = len(self.nodes)
+            for i in range(0, node_size):
+                v_property_list.append(self.nodes[self.index2node[i]])
+
             for d in self.edges:
                 if "weight" not in d[2]:
                     w_list.append(1.0)
-                    property_list.append(d[2])
+                    e_property_list.append(d[2])
                 else:
                     w_list.append(d[2]["weight"])
                     tmp_dict = copy.deepcopy(d[2])
                     del tmp_dict["weight"]
-                    property_list.append(tmp_dict)
+                    e_property_list.append(tmp_dict)
 
-            self.cache["e"] = e_list, w_list, property_list
+            self.cache["e"] = e_list, w_list, v_property_list, e_property_list
         return self.cache["e"]
 
     @property
     def D_v(self):
-        r"""Return the diagnal matrix of vertex degree :math:`\mathbf{D}_v` with ``torch.sparse_coo_tensor`` format. Size :math:`(|\mathcal{V}|, |\mathcal{V}|)`.
+        r"""Return the diagonal matrix of vertex degree :math:`\mathbf{D}_v` with ``torch.sparse_coo_tensor`` format. Size :math:`(|\mathcal{V}|, |\mathcal{V}|)`.
         """
         import torch
 
         if self.cache.get("D_v") is None:
+            # print("self.A:",self.A)
             _tmp = torch.sparse.sum(self.A, dim=1).to_dense().clone().view(-1)
-            self.cache["D_v"] = torch.sparse_coo_tensor(
-                torch.arange(0, len(self.nodes)).view(1, -1).repeat(2, 1),
+
+            nodes_num = len(self.nodes)
+            self.cache["D_v"] = torch.sparse_csr_tensor(
+                torch.arange(0, nodes_num + 1),
+                torch.arange(0, nodes_num),
                 _tmp,
-                torch.Size([len(self.nodes), len(self.nodes)]),
+                torch.Size([nodes_num, nodes_num]),
                 device=self.device,
-            ).coalesce()
+            )
+
+            # self.cache["D_v"] = torch.sparse_coo_tensor(
+            #     torch.arange(0, len(self.nodes)).view(1, -1).repeat(2, 1),
+            #     _tmp,
+            #     torch.Size([len(self.nodes), len(self.nodes)]),
+            #     device=self.device,
+            # ).coalesce()
         return self.cache["D_v"]
 
     def add_extra_selfloop(self):
@@ -366,6 +345,8 @@ class Graph:
         return self.N_v(v_idx).cpu().numpy().tolist()
 
     def N_v(self, v_idx: int) -> Tuple[List[int], List[float]]:
+        import torch
+
         r"""Return the neighbors of the vertex ``v_idx`` with ``torch.Tensor`` format.
 
         Args:
@@ -505,14 +486,12 @@ class Graph:
             \mathcal{L}_{GCN} = \mathbf{\hat{D}}_v^{-\frac{1}{2}} \mathbf{\hat{A}} \mathbf{\hat{D}}_v^{-\frac{1}{2}}
 
         """
+        import torch
+
         if self.cache.get("L_GCN") is None:
-            _tmp_g = self.clone()
-            _tmp_g.add_extra_selfloop()
+            # self.add_extra_selfloop()
             self.cache["L_GCN"] = (
-                _tmp_g.D_v_neg_1_2.mm(_tmp_g.A)
-                .mm(_tmp_g.D_v_neg_1_2)
-                .clone()
-                .coalesce()
+                self.D_v_neg_1_2.mm(self.A).mm(self.D_v_neg_1_2).coalesce()
             )
         return self.cache["L_GCN"]
 
@@ -523,11 +502,14 @@ class Graph:
             ``X`` (``torch.Tensor``): Vertex feature matrix. Size :math:`(|\mathcal{V}|, C)`.
             ``drop_rate`` (``float``): Dropout rate. Randomly dropout the connections in adjacency matrix with probability ``drop_rate``. Default: ``0.0``.
         """
+        import torch
+
         if drop_rate > 0.0:
             L_GCN = sparse_dropout(self.L_GCN, drop_rate)
         else:
             L_GCN = self.L_GCN
-        return L_GCN.mm(X)
+
+        return torch.sparse.mm(L_GCN, X)
 
     def number_of_edges(self, u=None, v=None):
         """Returns the number of edges between two nodes.
@@ -708,6 +690,8 @@ class Graph:
         ... })
 
         """
+        if "node_attr" in node_attr:
+            node_attr = node_attr.get("node_attr")
         self._add_one_node(node_for_adding, node_attr)
         self._clear_cache()
 
@@ -828,6 +812,8 @@ class Graph:
 
     def _add_one_node(self, one_node_for_adding, node_attr: dict = {}):
         node = one_node_for_adding
+        assert node != None, "Nodes can not be None."
+        hash(node)
         if node not in self._node:
             self._node_index[node] = self._id
             self._id += 1
@@ -873,6 +859,8 @@ class Graph:
         ... })
 
         """
+        if "edge_attr" in edge_attr:
+            edge_attr = edge_attr.get("edge_attr")
         self._add_one_edge(u_of_edge, v_of_edge, edge_attr)
         self._clear_cache()
 
@@ -1204,6 +1192,7 @@ class Graph:
         >>> G.remove_node('Jack')
 
         """
+        assert node_to_remove != None, "Nodes can not be None."
         try:
             neighbors = list(self._adj[node_to_remove])
             del self._node[node_to_remove]
@@ -1288,7 +1277,7 @@ class Graph:
 
         Examples
         --------
-        Remove the edges *('Jack', 'Mary')* amd *('Mary', 'Tom')* from *G*
+        Remove the edges *('Jack', 'Mary')* and *('Mary', 'Tom')* from *G*
 
         >>> G.remove_edge([
         ...     ('Jack', 'Mary'),
@@ -1313,6 +1302,7 @@ class Graph:
         Bool : True (exist) or False (not exists)
 
         """
+        assert node != None, "Nodes can not be None."
         return node in self._node
 
     def has_edge(self, u, v):
@@ -1329,6 +1319,7 @@ class Graph:
         Bool : True (exist) or False (not exists)
 
         """
+        assert u != None and v != None, "Nodes can not be None."
         try:
             return v in self._adj[u]
         except KeyError:
@@ -1503,40 +1494,42 @@ class Graph:
         return eg.DiGraph
 
     def to_directed(self):
-        """Returns a directed representation of the graph.
+        """Creates and returns a directed graph from self.
 
         Returns
         -------
         G : DiGraph
-            A directed graph with the same name, same nodes, and with
-            each edge (u, v, data) replaced by two directed edges
-            (u, v, data) and (v, u, data).
+            A directed graph with identical name and nodes. Each undirected
+            edge (u, v, data) in the original graph is replaced by two directed
+            edges (u, v, data) and (v, u, data).
 
         Notes
         -----
-        This returns a "deepcopy" of the edge, node, and
-        graph attributes which attempts to completely copy
-        all of the data and references.
+        This function returns a deepcopy of the original graph, including
+        all nodes, edges, and graph. As a result, it fully duplicates
+        the data and references in the original graph.
 
-        This is in contrast to the similar D=DiGraph(G) which returns a
-        shallow copy of the data.
+        This function differs from D=DiGraph(G) which returns a
+        shallow copy.
 
-        See the Python copy module for more information on shallow
-        and deep copies, https://docs.python.org/3/library/copy.html.
+        For more details on shallow and deep copies, refer to the
+        Python `copy` module: https://docs.python.org/3/library/copy.html.
 
-        Warning: If you have subclassed Graph to use dict-like objects
-        in the data structure, those changes do not transfer to the
-        DiGraph created by this method.
+        Warning: If the original graph is a subclass of `Graph` using
+        custom dict-like objects for its data structure, those customizations
+        will not be preserved in the `DiGraph` created by this function.
 
         Examples
         --------
+        Converting an undirected graph to a directed graph:
+
         >>> G = eg.Graph()  # or MultiGraph, etc
         >>> G.add_edge(0, 1)
         >>> H = G.to_directed()
         >>> list(H.edges)
         [(0, 1), (1, 0)]
 
-        If already directed, return a (deep) copy
+        Creating a deep copy of an already directed graph:
 
         >>> G = eg.DiGraph()  # or MultiDiGraph, etc
         >>> G.add_edge(0, 1)

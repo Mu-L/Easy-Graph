@@ -119,7 +119,7 @@ def hypergraph_local_clustering_coefficient(H):
     -------
     >>> import easygraph as eg
     >>> H = eg.random_hypergraph(3, [1, 1])
-    >>> cc = eg.local_clustering_coefficient(H)
+    >>> cc = eg.hypergraph_local_clustering_coefficient(H)
     >>> cc
     {0: 1.0, 1: 1.0, 2: 1.0}
 
@@ -155,8 +155,8 @@ def hypergraph_local_clustering_coefficient(H):
                     if len(D1.union(D2)) == 0:
                         eo = 0
                     else:
-                        # otherwise we have to look at their neighbours
-                        # the neighbours of D1 and D2, respectively.
+                        # otherwise we have to look at their neighbors
+                        # the neighbors of D1 and D2, respectively.
                         neighD1 = {i for d in D1 for i in H.neighbor_of_node(d)}
                         neighD2 = {i for d in D2 for i in H.neighbor_of_node(d)}
                         # compute extra overlap [len() is used for cardinality of edges]
@@ -169,7 +169,7 @@ def hypergraph_local_clustering_coefficient(H):
                     # add it up
                     total_eo = total_eo + eo
 
-            # include normalisation by degree k*(k-1)/2
+            # include normalization by degree k*(k-1)/2
             result[n] = 2 * total_eo / (dv * (dv - 1))
     return result
 

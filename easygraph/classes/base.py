@@ -75,7 +75,6 @@ class BaseHypergraph:
         if e_property == None and e_list != None:
             self._e_property = [{} for i in range(len(e_list))]
         elif e_property != None and e_list != None:
-            print("e_list:", e_list)
             e_property = self._format_e_property_list(len(e_list), e_property)
             self._e_property = e_property
 
@@ -197,8 +196,9 @@ class BaseHypergraph:
         Args:
             ``e_list`` (``List[int]`` or ``List[List[int]]``): The hyperedge list.
         """
-
-        if type(e_list[0]) in (int, float):
+        if len(e_list) == 0:
+            pass
+        elif type(e_list[0]) in (int, float):
             return [tuple(sorted(e_list))]
         elif type(e_list) == tuple:
             e_list = list(e_list)
@@ -207,7 +207,8 @@ class BaseHypergraph:
         else:
             raise TypeError("e_list must be List[int] or List[List[int]].")
         for _idx in range(len(e_list)):
-            e_list[_idx] = tuple(sorted(e_list[_idx]))
+            e_list[_idx] = tuple(sorted(list(set(e_list[_idx]))))
+
         return e_list
 
     def _format_e_property_list(self, e_num, e_property_list: Union[Dict, List[Dict]]):
@@ -285,6 +286,36 @@ class BaseHypergraph:
             w_list[idx] = cur_w[sorted_idx].tolist()
         return e_list, w_list
 
+    def _fetch_H(self, direction: str, group_name: str):
+        r"""Fetch the H matrix of the specified hyperedge group with ``torch.sparse_coo_tensor`` format.
+
+        Args:
+            ``direction`` (``str``): The direction of hyperedges can be either ``'v2e'`` or ``'e2v'``.
+            ``group_name`` (``str``): The name of the group.
+        """
+        assert (
+            group_name in self.group_names
+        ), f"The specified {group_name} is not in existing hyperedge groups."
+        assert direction in ["v2e", "e2v"], "direction must be one of ['v2e', 'e2v']"
+        if direction == "v2e":
+            select_idx = 0
+        else:
+            select_idx = 1
+        num_e = len(self._raw_groups[group_name])
+        e_idx, v_idx = [], []
+        for _e_idx, e in enumerate(self._raw_groups[group_name].keys()):
+            sub_e = e[select_idx]
+            v_idx.extend(sub_e)
+            e_idx.extend([_e_idx] * len(sub_e))
+
+        H = torch.sparse_coo_tensor(
+            torch.tensor([v_idx, e_idx], dtype=torch.long),
+            torch.ones(len(v_idx)),
+            torch.Size([self.num_v, num_e]),
+            device=self.device,
+        ).coalesce()
+        return H
+
     def _fetch_H_of_group(self, direction: str, group_name: str):
         r"""Fetch the H matrix of the specified hyperedge group with ``torch.sparse_coo_tensor`` format.
 
@@ -306,6 +337,7 @@ class BaseHypergraph:
             sub_e = e[select_idx]
             v_idx.extend(sub_e)
             e_idx.extend([_e_idx] * len(sub_e))
+
         H = torch.sparse_coo_tensor(
             torch.tensor([v_idx, e_idx], dtype=torch.long),
             torch.ones(len(v_idx)),
@@ -353,7 +385,7 @@ class BaseHypergraph:
         assert (
             group_name in self.group_names
         ), f"The specified {group_name} is not in existing hyperedge groups."
-        w_list = [content["w_e"] for content in self._raw_groups[group_name].values()]
+        w_list = [1.0] * len(self._raw_groups["main"])
         W = torch.tensor(w_list, device=self.device).view((-1, 1))
         return W
 
@@ -424,7 +456,7 @@ class BaseHypergraph:
             ``merge_op`` (``str``): The merge operation for the conflicting hyperedges.
             ``group_name`` (``str``): The target hyperedge group to add this hyperedge.
         """
-        if group_name not in self.group_names:
+        if group_name not in self._raw_groups:
             self._raw_groups[group_name] = {}
             self._raw_groups[group_name][hyperedge_code] = content
         else:

@@ -3,8 +3,11 @@
 __pycache__
 test/
 related-repos/
-test.py
+tmp_test/test.py
+tmp_test/dynamic_hypergraph.pdf
 hypergraph_tutorial.py
+tmp_test/visulation_test.py
+hypergraph-bench/
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
 
@@ -201,4 +204,6 @@ Icon
 Network Trash Folder
 Temporary Items
 .apdisk
-
+tmp_test/allset_test.py
+tmp_test/
+RandomNetwork.txt
